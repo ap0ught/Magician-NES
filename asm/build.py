@@ -9,7 +9,7 @@ which its README leaves to the game. This script is that placement:
   build already proved (pinned where the source says so, assumed otherwise).
 * X7 is anchored so ``reset`` lands on the Beta 1 reset vector recorded below.
   That vector is a constant in this file. No cartridge dump is opened.
-* CHR is packed from ``DAT/`` in the order ``SENDG`` sends it.
+* CHR is packed from ``DAT/`` at the 1 KiB bank offsets ``SENDG`` declares.
 
     python3 asm/build.py
     make -C asm source-rom
@@ -73,14 +73,22 @@ WINDOW_SLOTS = {
     "SEQ.SRC": {0xA000: 5, 0xC000: None},
 }
 
-# CHR, in the order SENDG sends it, then the sprite banks, then IN.CHR.
-# The slot numbers SENDG records are not file offsets; packing is sequential.
-CHR_SEND_ORDER = [
-    "10.chr", "20.chr", "21.chr", "30.chr", "40.chr", "50.chr", "53.chr",
-    "60.chr", "70.chr", "73.chr", "80.chr", "su.chr", "spr/inv.spr",
-    "map.chr", "tit0.chr", "tit1.chr", "tit2.chr", "sh.chr",
+# SENDG's fourth `load` argument is a 1 KiB CHR bank index (`radix 10`, `$` hex).
+# A 4 KiB set is written `$nn*4` because it occupies four of those banks, which
+# is also its 4 KiB page: `s0f = $f*$4` in X0.PDS, and SH.CHR is filed at $F000.
+# Sprite banks are one page each (`$40`..`$73`). `in.chr` follows `bank $1f*4`.
+# File offset is that index times 0x400. Do not concatenate from cursor 0.
+CHR_PAGE = 0x400
+CHR_BANKS = [
+    ("10.chr", 0x00 * 4), ("20.chr", 0x01 * 4), ("21.chr", 0x02 * 4),
+    ("30.chr", 0x03 * 4), ("40.chr", 0x04 * 4), ("50.chr", 0x05 * 4),
+    ("53.chr", 0x06 * 4), ("60.chr", 0x07 * 4), ("70.chr", 0x08 * 4),
+    ("73.chr", 0x09 * 4), ("80.chr", 0x0A * 4), ("su.chr", 0x0B * 4),
+    ("spr/inv.spr", 0x0C * 4), ("map.chr", 0x0D * 4), ("tit0.chr", 0x0E * 4),
+    ("tit1.chr", 0x1D * 4), ("tit2.chr", 0x1E * 4), ("sh.chr", 0x0F * 4),
 ]
-SPRITE_FIRST, SPRITE_LAST = 0x40, 0x73
+CHR_BANKS += [(f"spr/bank{n:02x}.dat", n) for n in range(0x40, 0x74)]
+CHR_BANKS.append(("in.chr", 0x1F * 4))
 
 
 def _refuse_cartridge_reads() -> None:
@@ -195,17 +203,22 @@ def dat_file(name: str) -> pathlib.Path:
 
 
 def build_chr() -> bytearray:
+    """File each DAT asset at the bank offset SENDG declares."""
     image = bytearray(CHR_SIZE)
-    names = list(CHR_SEND_ORDER)
-    names += [f"SPR/BANK{bank:02X}.DAT" for bank in range(SPRITE_FIRST, SPRITE_LAST + 1)]
-    names.append("IN.CHR")
-    cursor = 0
-    for name in names:
+    placed: list[tuple[str, int, int]] = []
+    for name, bank in CHR_BANKS:
         data = dat_file(name).read_bytes()
-        if cursor + len(data) > CHR_SIZE:
-            raise SystemExit(f"{name} does not fit at {cursor:#x}")
-        image[cursor:cursor + len(data)] = data
-        cursor += len(data)
+        off = bank * CHR_PAGE
+        end = off + len(data)
+        if off < 0 or end > CHR_SIZE:
+            raise SystemExit(f"{name} bank ${bank:02X} does not fit at {off:#x}")
+        for prev, prev_off, prev_len in placed:
+            if off < prev_off + prev_len and prev_off < end:
+                raise SystemExit(
+                    f"{name} at {off:#x} overlaps {prev} at {prev_off:#x}"
+                )
+        image[off:end] = data
+        placed.append((name, off, len(data)))
     return image
 
 

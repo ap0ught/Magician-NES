@@ -33,6 +33,6 @@ git clone https://github.com/ap0ught/pds6502.git ../pds6502
 make -C asm source-rom
 ```
 
-That writes `asm/out/magician-source.nes`. The file is git-ignored. PRG comes from `X0.PDS`–`X7.PDS` and `SEQ.SRC`. CHR comes from `DAT/` in `SENDG` order. X7 is placed so `reset` is the Beta 1 vector `$F930` recorded in `asm/build.py`.
+That writes `asm/out/magician-source.nes`. The file is git-ignored. PRG comes from `X0.PDS`–`X7.PDS` and `SEQ.SRC`. Each CHR file is filed at the 1 KiB bank offset `SENDG` declares (`$nn*4` for a 4 KiB set, so `SH.CHR` is at `$F000`, `BANK40.DAT` at `$10000`, `TIT1.CHR` at `$1D000`, `TIT2.CHR` at `$1E000`). X7 is placed so `reset` is the Beta 1 vector `$F930` recorded in `asm/build.py`.
 
-With pds6502 `0110a54` this tree produces a 262160-byte ROM, sha256 `b7622d210bac8fca92bd3cbf7b5491ddd12ccc5094f69c964a1a7bb0c0c373c9`, vectors nmi `$F917` reset `$F930` irq `$F922`, header byte 6 `$40`. The PRG matches the magician-nes-re source-only image. The full file does not match `23607f17d6bd980b252214156d484e2f9bd6259ab652093bcb79ef81f82e8674`, because that image packs CHR assets that were later replaced in the magician-nes-re vendor tree. This repository keeps the DAT files from the source drop.
+With pds6502 `0110a54` this tree produces a 262160-byte ROM, sha256 `23607f17d6bd980b252214156d484e2f9bd6259ab652093bcb79ef81f82e8674`, vectors nmi `$F917` reset `$F930` irq `$F922`, header byte 6 `$40`. That image is the source-drop files filed at the `SENDG` bank offsets. No cartridge is read.
