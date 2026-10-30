@@ -19,3 +19,18 @@ http://www.shrigley.com
 
 PLEASE KEEP THIS READ_ME FILE WITH THE PACKAGE. THANKS!
 Source code for the 1990 NES game Magician
+
+## Building a ROM
+
+Chris Shrigley's terms above still apply: this is for education, and it is not for sale. Keep `_READ_ME.TXT` with the package.
+
+The assembler is [pds6502](https://github.com/ap0ught/pds6502). There is no separate `pdsasm` program or repository; `pds6502` is the PDS 1.26 assembler, and `asm/pds6502.py` is the loader its README describes. Its CLI assembles one file into a flat PRG image. Placing the MMC3 slots and packing CHR is this repository's build, and that build does not open a cartridge dump.
+
+Clone pds6502 next to this repository, or set `PDS6502_HOME` to the checkout:
+
+```
+git clone https://github.com/ap0ught/pds6502.git ../pds6502
+make -C asm source-rom
+```
+
+That writes `asm/out/magician-source.nes`. The file is git-ignored. PRG comes from `X0.PDS`–`X7.PDS` and `SEQ.SRC`. Each CHR file is filed at the 1 KiB bank offset `SENDG` declares (`$nn*4` for a 4 KiB set, so `SH.CHR` is at `$F000`, `BANK40.DAT` at `$10000`, `TIT1.CHR` at `$1D000`, `TIT2.CHR` at `$1E000`). X7 is placed so `last` meets `$FB80`, which `X7.PDS` pads to, and `org $fffa` / `dw nmi,reset,irq` emits the vectors. The command prints the image size and sha256. No cartridge is read.

@@ -1,0 +1,8 @@
+# Built ROMs are generated from the PDS sources. Do not commit them.
+*.nes
+*.unif
+*.unl
+asm/out/
+
+__pycache__/
+*.pyc

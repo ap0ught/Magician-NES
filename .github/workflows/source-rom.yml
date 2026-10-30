@@ -1,0 +1,41 @@
+name: Source ROM
+
+# Builds a .nes from the PDS sources in this repository. The cartridge dump
+# is not a build input. *.nes stays git-ignored; the file is a workflow artifact.
+#
+# Shrigley's terms still apply: educational use, not for sale. See _READ_ME.TXT.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "asm/**"
+      - "X*.PDS"
+      - "*.SRC"
+      - "DAT/**"
+      - "SENDG"
+      - ".github/workflows/source-rom.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-rom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ap0ught/pds6502
+          ref: 0110a549cf7985a892b3d2914f4269c886dbd003
+          path: pds6502
+      - name: Assemble from the PDS sources
+        env:
+          PDS6502_HOME: ${{ github.workspace }}/pds6502
+        run: make -C asm source-rom
+      - name: Upload the ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: magician-source
+          path: asm/out/magician-source.nes
+          if-no-files-found: error
