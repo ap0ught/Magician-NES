@@ -5,10 +5,10 @@ The assembler is pds6502 (loaded by asm/pds6502.py). Its own CLI writes one
 source file into a flat PRG image and does not place MMC3 slots or pack CHR,
 which its README leaves to the game. This script is that placement:
 
-* X0-X7 and SEQ.SRC are assembled with the slots the source-only Magician
-  build already proved (pinned where the source says so, assumed otherwise).
-* X7 is anchored so ``reset`` lands on the Beta 1 reset vector recorded below.
-  That vector is a constant in this file. No cartridge dump is opened.
+* X0-X7 and SEQ.SRC are assembled into the MMC3 slots the sources name.
+* X7 is placed so the label ``last`` meets ``$FB80``, the address X7.PDS
+  pads to and where it loads SAM.SAM. ``org $fffa`` / ``dw nmi,reset,irq``
+  in that file emits the vectors. No cartridge dump is opened.
 * CHR is packed from ``DAT/`` at the 1 KiB bank offsets ``SENDG`` declares.
 
     python3 asm/build.py
@@ -33,12 +33,13 @@ ROM = OUT / "magician-source.nes"
 PRG_SIZE = 128 * 1024
 CHR_SIZE = 128 * 1024
 
-# Beta 1 vectors, recorded here so the anchor does not read a .nes file.
-# nmi, reset, irq. Reset is what X7 is fitted to.
-BETA1_VECTORS = (0xF917, 0xF930, 0xF922)
+# X7.PDS: `if last>$fb80` / `ds $fb80-last` / `load mus\sam.sam,$fb80`.
+# The module is placed so `last` is that address. The vectors are the
+# words `org $fffa` / `dw nmi,reset,irq` assemble, not a copied header.
+LAST_AT = 0xFB80
 
-# Mapper 4, 128 KiB PRG, 128 KiB CHR. Byte 6 is $40: mapper low nibble 4,
-# battery bit clear. Recorded, not copied out of a dump at build time.
+# iNES mapper 4 (MMC3, the map X5.PDS describes), 128 KiB PRG, 128 KiB CHR.
+# Byte 6 is $40: mapper low nibble 4, battery bit clear.
 INES_HEADER = bytes([
     0x4E, 0x45, 0x53, 0x1A,
     0x08,
@@ -51,21 +52,18 @@ INES_HEADER = bytes([
 
 MODULES = [f"X{i}.PDS" for i in range(8)]
 
-# Slots the source-only build uses when it is not scoring modules against a
-# cartridge. X4, X6 and X7 are pinned from the source's own bank notes and from
-# the recorded reset vector (X7). The others are the assumed slots that build
-# falls through to. X1 and X2 are chained onto the previous module on the
-# project pass, so the slot stored here is only the provisional one.
+# Slots named by the sources. X5 is `org $c000` (bank $0E). X6 and X7 have no
+# `org` and share that fixed $C000-$FFFF window (X5.PDS). X4 is slot 2 at
+# $8000 and slot 3 at $A000 (`farjsr67` and "must reside above $9FFF").
+# X0 is `org $8000` with `bnk 6,#$0`. X3 is `bnk 6,#4`. SEQ.SRC is included
+# from DISP.SRC's `org $a000`, and X4.PDS sets `bfra equ $5` for that window.
+# X1 and X2 are chained onto the previous module, so their slot here is only
+# the window they continue in.
 PINNED_SLOTS = {"X4.PDS": 2, "X6.PDS": 15, "X7.PDS": 15}
 ASSUMED_SLOTS = {
     "X0.PDS": 0, "X1.PDS": 1, "X2.PDS": 0, "X3.PDS": 4, "X5.PDS": 14,
 }
 CHAINED = ("X1.PDS", "X2.PDS")
-
-# First-pass origin for X6. The project pass replaces it with a derived start
-# once X6's length and X7's anchor are both known. $E605 is the literal the
-# measurement pass uses; it is not the address that ends up in the ROM.
-X5_CEILING_LITERAL = 0xE605
 
 WINDOW_SLOTS = {
     "X2.PDS": {0x8000: 0, 0xA000: 1},
@@ -125,7 +123,7 @@ def _new_asm(image: bytearray) -> Assembler:
 
 
 def assemble_prg() -> tuple[bytearray, Assembler, list[str]]:
-    """Two project passes. The first measures X7; the second anchors it."""
+    """Two project passes. The first measures X7; the second places `last`."""
     slots = []
     for name in MODULES:
         if name in PINNED_SLOTS:
@@ -146,17 +144,11 @@ def assemble_prg() -> tuple[bytearray, Assembler, list[str]]:
     log: list[str] = []
     x7_base = None
     derived: dict[str, int] | None = None
-    image = bytearray(PRG_SIZE)
-    asm = _new_asm(image)
-    want = BETA1_VECTORS[1]
 
     for attempt in range(2):
         image = bytearray(PRG_SIZE)
         asm = _new_asm(image)
-        origins: dict[str, int] = {
-            "SEQ.SRC": 0xA000,
-            "X6.PDS": X5_CEILING_LITERAL,
-        }
+        origins: dict[str, int] = {"SEQ.SRC": 0xA000}
         if x7_base is not None:
             origins["X7.PDS"] = x7_base
         if derived is not None:
@@ -165,11 +157,15 @@ def assemble_prg() -> tuple[bytearray, Assembler, list[str]]:
         asm.run_all(paths, slot_list, origins, WINDOW_SLOTS, ceilings)
 
         reset = asm.sym.get("reset")
-        if reset is None:
-            raise SystemExit("X7 did not define reset")
+        last = asm.sym.get("last")
+        if reset is None or last is None:
+            raise SystemExit("X7 did not define reset and last")
         if attempt == 0:
-            x7_off = reset - Assembler.slot_origin(PINNED_SLOTS["X7.PDS"])
-            x7_base = want - x7_off
+            # First pass starts X7 at slot 15's $E000. `last` and `reset`
+            # sit before X7's only `org`, so both move by the same amount
+            # when the second pass sets the origin.
+            slot_base = Assembler.slot_origin(PINNED_SLOTS["X7.PDS"])
+            x7_base = LAST_AT - (last - slot_base)
             x6 = asm.writes_by_file.get("X6.PDS") or ()
             if not x6:
                 raise SystemExit("X6 emitted nothing; cannot derive the slot 15 split")
@@ -177,18 +173,18 @@ def assemble_prg() -> tuple[bytearray, Assembler, list[str]]:
             x6_base = x7_base - x6_len
             derived = {"X5.PDS": x6_base, "X6.PDS": x7_base}
             log.append(
-                f"X7.PDS: reset is ${x7_off:04X} into the module; "
-                f"recorded reset ${want:04X} puts X7 at ${x7_base:04X}"
+                f"X7.PDS: last is ${last:04X} from slot ${slot_base:04X}; "
+                f"X7.PDS names ${LAST_AT:04X}, so X7 begins at ${x7_base:04X}"
             )
             log.append(
                 f"X6.PDS: {x6_len} bytes, so X6 starts at ${x6_base:04X} "
-                f"and X5's ceiling is ${x6_base:04X}"
+                f"and X5 stops there"
             )
             continue
         log.append(
-            f"X7.PDS: anchored at ${x7_base:04X}; "
-            f"reset ${asm.sym['reset']:04X} (recorded ${want:04X}), "
-            f"nmi ${asm.sym.get('nmi', 0):04X}, irq ${asm.sym.get('irq', 0):04X}"
+            f"X7.PDS: last ${asm.sym['last']:04X}; "
+            f"org $fffa emits nmi ${asm.sym.get('nmi', 0):04X} "
+            f"reset ${asm.sym['reset']:04X} irq ${asm.sym.get('irq', 0):04X}"
         )
     return image, asm, log
 
@@ -257,13 +253,6 @@ def main() -> int:
     print(f"header[6] ${rom[6]:02X}")
     print(f"vectors nmi ${nmi:04X} reset ${reset:04X} irq ${irq:04X}")
     print("cartridge file opened: no")
-    if reset != BETA1_VECTORS[1]:
-        print(
-            f"warning: reset is ${reset:04X}, recorded anchor is "
-            f"${BETA1_VECTORS[1]:04X}",
-            file=sys.stderr,
-        )
-        return 1
     return 0
 
 
